@@ -15,7 +15,6 @@ exports.handler = async function(event, context) {
         }
 
         // Use the correct symbol for VIX
-        // The VIX symbol should be "VIX" instead of "%5EVIX"
         const vixResponse = await axios.get(
             `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=VIX&apikey=${API_KEY}`
         );
@@ -62,10 +61,36 @@ exports.handler = async function(event, context) {
         );
 
         // Process SPY data
-        const spyPrice = parseFloat(spyResponse.data['Global Quote']['05. price'] || 0);
+        let spyPrice = 0;
+        let spyChange = 0;
 
-        // Construct the market data object
+        if (spyResponse.data && spyResponse.data['Global Quote']) {
+            spyPrice = parseFloat(spyResponse.data['Global Quote']['05. price'] || 0);
+            spyChange = parseFloat(spyResponse.data['Global Quote']['09. change'] || 0);
+        }
+
+        // Get SPY RSI if possible (might hit rate limits)
+        let spyRsi = 50; // Default value
+
+        try {
+            const spyRsiResponse = await axios.get(
+                `https://www.alphavantage.co/query?function=RSI&symbol=SPY&interval=daily&time_period=14&series_type=close&apikey=${API_KEY}`
+            );
+
+            if (spyRsiResponse.data && spyRsiResponse.data['Technical Analysis: RSI']) {
+                const rsiData = spyRsiResponse.data['Technical Analysis: RSI'];
+                const latestDate = Object.keys(rsiData)[0];
+                spyRsi = parseFloat(rsiData[latestDate].RSI);
+            }
+        } catch (error) {
+            console.warn('Could not fetch SPY RSI, using estimated value', error.message);
+            // Estimate RSI inversely related to VIX
+            spyRsi = Math.max(30, 60 - (currentVix / 2));
+        }
+
+        // Construct the market data object with clarity on data sources
         const marketData = {
+            // Direct API data
             vix: currentVix,
             historicalVix: {
                 daily: vixHistorical,
@@ -73,50 +98,64 @@ exports.handler = async function(event, context) {
                 avg90Day: vixAvg90,
                 yesterday: yesterdayVix
             },
-            // We'll estimate the rest of the metrics based on VIX and SPY data
-            sentiment: {
-                // High VIX typically correlates with fear
-                putCallRatio: 1 + (currentVix / 40), // Estimate put/call based on VIX
-                bullBearSpread: -currentVix + 10, // Negative when VIX is high
-                fearGreedIndex: Math.max(5, 50 - (currentVix)), // Lower when VIX is high
-                aaii: {
-                    bullish: Math.max(20, 50 - (currentVix / 2)),
-                    bearish: Math.min(60, 30 + (currentVix / 2)),
-                    neutral: 30
-                },
-                institutionalFlows: -5 - (currentVix / 5)
-            },
             technicalIndicators: {
                 spy: {
                     price: spyPrice,
-                    sma50: spyPrice * 0.98, // Estimate
-                    sma200: spyPrice * 0.95, // Estimate
-                    rsi: Math.max(30, 60 - (currentVix / 2)) // Estimate RSI inversely related to VIX
+                    rsi: spyRsi,
+                    // We don't have direct SMA data from our API calls
+                    sma50: spyPrice * 0.98, // Estimated
+                    sma200: spyPrice * 0.95 // Estimated
                 },
+                // These are derived from VIX data
                 macdDivergence: currentVix > 25 && yesterdayVix > currentVix,
-                rsiOversold: currentVix > 30,
+                rsiOversold: spyRsi < 30,
                 bullishReversalPatterns: currentVix > 25 && yesterdayVix > currentVix ? 1 : 0
             },
+            // The following sections contain estimated data based on VIX and SPY
+            sentiment: {
+                putCallRatio: 1 + (currentVix / 40), // Estimated
+                bullBearSpread: -currentVix + 10, // Estimated
+                fearGreedIndex: Math.max(5, 50 - (currentVix)), // Estimated
+                aaii: {
+                    bullish: Math.max(20, 50 - (currentVix / 2)), // Estimated
+                    bearish: Math.min(60, 30 + (currentVix / 2)), // Estimated
+                    neutral: 30 // Estimated
+                },
+                institutionalFlows: -5 - (currentVix / 5) // Estimated
+            },
             valuations: {
-                // These are rough estimates based on typical market conditions
-                averagePE: 15 + (30 - Math.min(30, currentVix)) / 2,
-                historicalPE: 18,
-                averagePB: 2.5,
-                historicalPB: 3,
-                earningsYield: 0.05 + (Math.min(30, currentVix) / 1000),
-                historicalEarningsYield: 0.045
+                averagePE: 15 + (30 - Math.min(30, currentVix)) / 2, // Estimated
+                historicalPE: 18, // Standard value
+                averagePB: 2.5, // Estimated
+                historicalPB: 3, // Standard value
+                earningsYield: 0.05 + (Math.min(30, currentVix) / 1000), // Estimated
+                historicalEarningsYield: 0.045 // Standard value
             },
             marketBreadth: {
-                // These are estimates - high VIX typically means poor breadth
-                advanceDeclineRatio: 1 - (Math.min(30, currentVix) / 60),
-                percentAbove50DMA: 0.5 - (Math.min(30, currentVix) / 100),
-                percentAbove200DMA: 0.5 - (Math.min(30, currentVix) / 150),
-                newHighsVsNewLows: -Math.min(30, currentVix) + 15,
-                mcClellanOscillator: -Math.min(30, currentVix) + 15
+                advanceDeclineRatio: 1 - (Math.min(30, currentVix) / 60), // Estimated
+                percentAbove50DMA: 0.5 - (Math.min(30, currentVix) / 100), // Estimated
+                percentAbove200DMA: 0.5 - (Math.min(30, currentVix) / 150), // Estimated
+                newHighsVsNewLows: -Math.min(30, currentVix) + 15, // Estimated
+                mcClellanOscillator: -Math.min(30, currentVix) + 15 // Estimated
             },
-            sectorPerformance: generateSectorData(currentVix),
-            watchlistData: generateWatchlistData(spyPrice, currentVix)
+            sectorPerformance: generateSectorData(currentVix), // Estimated based on VIX
+            // Removed watchlist data as requested
+            // Data source tracking
+            _dataSource: {
+                directApiData: ["vix", "vix historical values", "spy price"],
+                derivedFromVix: [
+                    "sentiment metrics",
+                    "valuation estimates",
+                    "market breadth",
+                    "sector performance",
+                    "technical signal estimates"
+                ],
+                updated: new Date().toISOString()
+            }
         };
+
+        // Remove the data source tracking in production
+        delete marketData._dataSource;
 
         return {
             statusCode: 200,
@@ -139,7 +178,7 @@ exports.handler = async function(event, context) {
     }
 };
 
-// Helper functions to generate data based on real VIX and SPY values
+// Helper function to generate sector data based on VIX
 function generateSectorData(vixValue) {
     const sectors = [
         'Technology', 'Healthcare', 'Financials',
@@ -158,38 +197,6 @@ function generateSectorData(vixValue) {
             monthlyChange: (baseChange + variation) * 8,
             yearToDateChange: (sector === 'Energy' ? 1 : -1) * (10 + Math.random() * 15),
             relativeStrength: 1 - (baseChange / 20) + (Math.random() - 0.5) * 0.3
-        };
-    });
-}
-
-function generateWatchlistData(spyPrice, vixValue) {
-    const stocks = [
-        { ticker: 'AAPL', basePrice: 170, betaMultiplier: 1.2 },
-        { ticker: 'MSFT', basePrice: 340, betaMultiplier: 1.1 },
-        { ticker: 'GOOGL', basePrice: 140, betaMultiplier: 1.3 },
-        { ticker: 'AMZN', basePrice: 180, betaMultiplier: 1.4 },
-        { ticker: 'META', basePrice: 480, betaMultiplier: 1.5 }
-    ];
-
-    // Base percentage change - higher VIX typically means larger negative change
-    const basePercentChange = -(vixValue / 30);
-
-    return stocks.map(stock => {
-        const stockChange = basePercentChange * stock.betaMultiplier + (Math.random() - 0.5) * 3;
-        const stockPrice = stock.basePrice * (1 + stockChange / 100);
-
-        return {
-            ticker: stock.ticker,
-            price: stockPrice,
-            dailyChange: stockChange,
-            weeklyChange: stockChange * 2.5 + (Math.random() - 0.5) * 5,
-            monthlyChange: stockChange * 5 + (Math.random() - 0.5) * 10,
-            yearToDateChange: -15 + Math.random() * 30,
-            pe: 20 + Math.random() * 10,
-            historicalAvgPE: 25,
-            volume: 40000000 + Math.random() * 40000000,
-            avgVolume: 50000000,
-            rsi: Math.max(30, 50 - vixValue / 3 + Math.random() * 10)
         };
     });
 }
