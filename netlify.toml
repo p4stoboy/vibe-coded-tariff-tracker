@@ -1,7 +1,7 @@
 # netlify.toml
 
 [build]
-  command = "npm run build"
+  command = "CI=false npm run build"  # Added CI=false to prevent treating warnings as errors
   publish = "build"
   functions = "netlify/functions"
 

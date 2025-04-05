@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { fetchMarketData } from '../services/marketDataService';
 import BottomSignalMeter from './BottomSignalMeter';
 import VixTracker from './VixTracker';
@@ -24,7 +24,24 @@ function Dashboard() {
     // Settings/configuration state
     const [refreshInterval, setRefreshInterval] = useState(300000); // 5 minutes by default
     const [watchlist, setWatchlist] = useState(['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']);
-    const [sectors, setSectors] = useState(['Technology', 'Healthcare', 'Consumer Cyclical', 'Energy', 'Financials']);
+    const [sectors] = useState(['Technology', 'Healthcare', 'Consumer Cyclical', 'Energy', 'Financials']);
+    // Removed setSectors since it's not being used
+
+    // Analyze data for potential bottom signals - wrapped in useCallback to use in dependency array
+    const analyzeBottomSignals = useCallback((data) => {
+        if (!data) return;
+
+        // This is a simplified scoring system - in a real app, you would implement more sophisticated algorithms
+        const signals = {
+            technicalSignals: calculateTechnicalScore(data.technicalIndicators),
+            valuationMetrics: calculateValuationScore(data.valuations),
+            marketBreadth: calculateBreadthScore(data.marketBreadth),
+            volatility: calculateVolatilityScore(data.vix, data.historicalVix),
+            sentiment: calculateSentimentScore(data.sentiment)
+        };
+
+        setBottomSignals(signals);
+    }, []);
 
     // Fetch market data on component mount and at refreshInterval
     useEffect(() => {
@@ -46,23 +63,7 @@ function Dashboard() {
         const intervalId = setInterval(fetchData, refreshInterval);
 
         return () => clearInterval(intervalId);
-    }, [refreshInterval, watchlist, sectors]);
-
-    // Analyze data for potential bottom signals
-    const analyzeBottomSignals = (data) => {
-        if (!data) return;
-
-        // This is a simplified scoring system - in a real app, you would implement more sophisticated algorithms
-        const signals = {
-            technicalSignals: calculateTechnicalScore(data.technicalIndicators),
-            valuationMetrics: calculateValuationScore(data.valuations),
-            marketBreadth: calculateBreadthScore(data.marketBreadth),
-            volatility: calculateVolatilityScore(data.vix, data.historicalVix),
-            sentiment: calculateSentimentScore(data.sentiment)
-        };
-
-        setBottomSignals(signals);
-    };
+    }, [refreshInterval, watchlist, sectors, analyzeBottomSignals]); // Added analyzeBottomSignals to dependency array
 
     // Example scoring functions (simplified)
     const calculateTechnicalScore = (indicators) => {
